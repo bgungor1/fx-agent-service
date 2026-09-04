@@ -1,42 +1,49 @@
-# Case study — Junior Software Engineer at mangolab
+# Currency Conversion Tool
 
-Two small tasks, **about two and a half hours in total.** Please do not spend
-your weekend on this. If you run out of time, stop and write down what you would
-have done next — that answer counts too.
-
-Use Claude Code, Cursor, Copilot — whatever you normally use. That is how we work
-every day, and we would rather see you use it well than watch you avoid it. The
-only thing we ask is that you know your own code.
-
-**Start by clicking "Use this template"** to create your own repository, then
-work there.
+A lightweight HTTP service designed as an AI agent tool for currency conversions based on European Central Bank (ECB) rates via Frankfurter.
 
 ---
 
-## Part A — build (about 90 minutes)
+## Quick Start (Under 1 Minute)
 
-A small HTTP service — Python + FastAPI preferred, TypeScript is fine — with one
-endpoint an AI agent could call as a tool:
-
-```
-GET /tools/convert?amount=250&from=EUR&to=TRY&date=2026-08-28
+### 1. Install Dependencies
+```bash
+pip install -r requirements.txt
 ```
 
-It answers using the public [Frankfurter API](https://frankfurter.dev) —
-European Central Bank rates, no API key, no signup.
+### 2. Run the Service
+Starts on port `8080` by default (or reads `$PORT` and `$FX_UPSTREAM_BASE`):
+```bash
+./run.sh
+# or: uvicorn main:app --port 8080
+```
 
-### Three things are fixed, so that we can run every submission the same way
+### 3. Run the Tests (100% Offline)
+```bash
+./test.sh
+# or: pytest test_main.py -v
+```
+*Note: Tests run entirely offline using mocked HTTP transports without touching the network.*
 
-| | |
-|---|---|
-| Upstream URL | from the `FX_UPSTREAM_BASE` environment variable, defaulting to `https://api.frankfurter.dev`. **Nothing may hardcode the real host** — we point this at a fake upstream when reviewing. |
-| Port | from the `PORT` environment variable, default `8080` |
-| Scripts | `./run.sh` starts the service, `./test.sh` runs the tests. Both are in this template, unimplemented. |
+---
 
-### The response
+## API Specification
 
-On success, 200 with:
+### Endpoint
+`GET /tools/convert`
 
+**Query Parameters:**
+* `amount` *(required, decimal)*: Amount to convert. Must be > 0 and have at most 10 decimal places.
+* `from` *(optional, string, default: "EUR")*: Source 3-letter currency code.
+* `to` *(optional, string, default: "TRY")*: Target 3-letter currency code.
+* `date` *(optional, string, default: "latest")*: ISO format date (`YYYY-MM-DD`) or `"latest"`. (`on` is also supported as an alias).
+
+#### Example Request
+```bash
+curl "http://localhost:8080/tools/convert?amount=250&from=EUR&to=TRY&date=2026-08-28"
+```
+
+#### Success Response (`200 OK`)
 ```json
 {
   "amount": 250,
@@ -50,80 +57,58 @@ On success, 200 with:
 }
 ```
 
-`rate_date` is **the date the rate you used actually belongs to.** `asked_date`
-is what the caller asked for. They are not always the same, and that difference
-is the point of this task.
+---
 
-On failure, a non-2xx status and:
+## How Edge Cases Are Handled
 
+| Scenario | Behavior / Response | Rationale |
+| :--- | :--- | :--- |
+| **Weekends / Holidays** (No ECB rate published) | Returns `200 OK` with the rate from the latest available ECB business day. `rate_date` shows the actual publication day (e.g. Friday), while `asked_date` retains the user's requested date (e.g. Saturday). | Never invents a rate; makes the date difference transparent so the agent can inform the customer. |
+| **Future Date** | Returns `400 Bad Request` (`error: future_date`). | Financial rates cannot be predicted. |
+| **Date Before Series Starts** (< 1999-01-04) | Returns `400 Bad Request` (`error: date_too_early`). | ECB euro reference rates began on January 4, 1999. |
+| **Same Currencies** (`from == to`) | Returns `400 Bad Request` (`error: same_currency`). | Rejecting prevents ambiguous zero-spread transactions and upstream misuse. |
+| **Non-existent Currency** | Returns `404 Not Found` (`error: not_found`). | Transparent failure when ECB does not support the currency. |
+| **Malformed Currency Code** | Returns `400 Bad Request` (`error: invalid_currency`). | Currency codes must be 3-letter alphabetic ISO codes. |
+| **Amount Missing** | Returns `400 Bad Request` (`error: invalid_input`). | Required parameter missing. |
+| **Amount Zero or Negative** | Returns `400 Bad Request` (`error: invalid_amount`). | Financial amounts must be strictly positive. |
+| **Amount Decimal Places** | Up to 10 decimal places are accepted with exact `Decimal` precision. > 10 decimal places returns `400 Bad Request` (`error: too_many_decimals`). | Guards against precision attacks and float serialization inaccuracies. |
+| **Slow Upstream / Timeout** | Returns `504 Gateway Timeout` (`error: upstream_timeout`). | 5-second timeout ensures caller is not hung indefinitely. |
+| **Upstream 500 / Non-JSON** | Returns `502 Bad Gateway` (`error: upstream_error` / `invalid_upstream_response`). | Distinguishes upstream infrastructure failures from client input errors. |
+| **Upstream Unreachable** | Returns `503 Service Unavailable` (`error: upstream_unreachable`). | Host connection failure. |
+
+---
+
+## Machine Error Codes
+
+All errors return a non-2xx status with payload:
 ```json
-{ "error": "<short_machine_code>", "message": "<a sentence a person could read>" }
+{
+  "error": "<short_machine_code>",
+  "message": "<a sentence a person could read>"
+}
 ```
 
-List your error codes in your README.
-
-### The part that matters
-
-The caller is a language model talking to a paying customer, so **a wrong number
-is worse than no number.** Decide — and implement — what happens when:
-
-- the ECB published no rate for the date asked (weekends, holidays);
-- the date is in the future, or before the series starts;
-- the currency code does not exist, or `from` and `to` are the same;
-- the upstream is slow, returns 500, or returns something that is not JSON;
-- `amount` is missing, zero, negative, or has ten decimal places.
-
-Your endpoint must never invent a rate, and must never present a rate as
-belonging to a date it does not belong to. Note that the upstream itself tells
-you which date its rates are from — read it. If you choose to answer with an
-earlier published rate, the response has to make that visible, because the model
-has to be able to tell the customer which day the number is from.
-
-### Also required
-
-- **Tests that pass with no network at all** — fake the upstream. We run
-  `./test.sh` with `FX_UPSTREAM_BASE` pointing at a closed port.
-- A README of your own we can follow in under a minute: how to run it, how to
-  run the tests, your error codes, and what your endpoint does in each of the
-  cases above.
-- A repeat of the same question should not re-ask the upstream.
-- `NOTES.md`, one page. The skeleton is in this repo.
-
-### Not required, not scored
-
-Auth, a database, a UI, a Dockerfile, CI, deployment, more endpoints. Adding them
-will not help you; a smaller thing done carefully will.
+| HTTP Status | Error Code | Description |
+| :--- | :--- | :--- |
+| `400` | `invalid_input` | Missing or invalid query parameter structure. |
+| `400` | `invalid_amount` | Amount is zero or negative. |
+| `400` | `too_many_decimals` | Amount has more than 10 decimal places. |
+| `400` | `invalid_currency` | Currency code is empty or not a valid 3-letter code. |
+| `400` | `same_currency` | Source and target currencies are identical. |
+| `400` | `invalid_date_format` | Date is not formatted as `YYYY-MM-DD`. |
+| `400` | `future_date` | Requested date is in the future. |
+| `400` | `date_too_early` | Requested date is before ECB data began (1999-01-04). |
+| `404` | `not_found` | Currency code not found, not supported by ECB, or no rate available for the requested date. |
+| `502` | `upstream_error` | Upstream service returned a 4xx/5xx status. |
+| `502` | `invalid_upstream_response`| Upstream returned malformed or non-JSON body. |
+| `503` | `upstream_unreachable` | Upstream host is unreachable or connection refused. |
+| `504` | `upstream_timeout` | Upstream request timed out (> 5 seconds). |
 
 ---
 
-## Part B — review (about 45 minutes)
+## Caching Strategy
 
-`tool.py` in this repository is a working version of the same service, written
-quickly with an AI assistant. It runs. **Review it as if it were going live
-tomorrow for a customer who pays us.**
-
-Fill in `REVIEW.md`, one page:
-
-- what is wrong, and what it does to a **customer** — not to a linter;
-- how you would verify each finding;
-- your findings **ranked**, and which single one you would fix before shipping
-  tonight.
-
-Fewer findings, ranked and explained, beat a long list. If something looks
-suspicious but is actually fine, saying so is worth as much as finding a real
-defect.
-
----
-
-## Submitting
-
-Reply to our email with a link to your repository. Commit in small steps — the
-history is part of what we read. Five days is plenty; if you need more, just say
-so.
-
-Any question about this brief, ask. An unclear requirement is our fault, not a
-test.
-
----
-
-<sub>mangolab — Mango Yazılım Teknolojileri Ltd. Şti. · [mangolab.ai/careers](https://mangolab.ai/careers)</sub>
+* **TTL In-Memory Cache**: Powered by `cachetools.TTLCache(maxsize=1024, ttl=3600)` (with standard dictionary fallback). Requests are keyed by `(date, from_currency, to_currency)`.
+* **Day-Boundary Invalidation**: Requests for `"latest"` embed the current date into their cache key (`latest-YYYY-MM-DD-FROM-TO`), ensuring cached rates never outlive midnight.
+* **Network Reduction**: Repeated requests for the same date and currency pair are served immediately from memory without contacting the upstream API.
+* **Response Header**: Cached responses include `X-Cache: HIT` (or `X-Cache: MISS`), while strictly keeping the body field `"source": "ECB via frankfurter.dev"`.
