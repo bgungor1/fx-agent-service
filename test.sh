@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Runs your tests. They must pass with no network at all: we run this with
-# FX_UPSTREAM_BASE pointing at a closed port.
 set -euo pipefail
-echo "test.sh is not implemented yet" >&2
-exit 1
+
+# Point upstream to a closed local port if not set, verifying complete offline execution
+export FX_UPSTREAM_BASE="${FX_UPSTREAM_BASE:-http://127.0.0.1:59999}"
+
+pytest test_main.py -v

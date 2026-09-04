@@ -1,5 +1,20 @@
-__pycache__/
-*.pyc
+# Virtual Environment
 .venv/
-node_modules/
+venv/
+ENV/
+
+# Python Cache & Bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Pytest / Test Artifacts
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Environment Variables & IDEs
 .env
+.vscode/
+.idea/
+*.swp
